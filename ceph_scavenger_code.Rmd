@@ -1,0 +1,1060 @@
+---
+title: "ceph_scavenger_project"
+author: "Martin A. Gonzalez"
+date: '2022-11-16'
+output: html_document
+purpose: coding file for squid spawning aggregation/scavenger feeding mapping project
+---
+
+
+# libraries
+```{r, include = FALSE}
+# install.packages('tidyverse')
+library(tidyverse)
+# install.packages('lubridate')
+library(lubridate)
+# install.packages('janitor')
+library(janitor)
+# install.packages('here')
+library(here)
+# install.packages('stringr')
+library(stringr)
+# install.packages('ggplot2')
+library(ggplot2)
+# install.packages('sf')
+library(sf)
+# install.packages('maps')
+library(maps)
+# install.packages('mapproj')
+library(mapproj)
+# install.packages('ggmap')
+library(ggmap)
+# install.packages('getPass')
+library(getPass)
+# install.packages('RODBC')
+library(RODBC)
+# install.packages('RColorBrewer')
+library(RColorBrewer)
+# install.packages('binr')
+library(binr)
+# install.packages('scales')
+library(scales)
+# install.packages('stringi')
+library(stringi)
+# install.packages('devtools')
+# library(devtools)
+# install.packages('rgdal')
+library(rgdal)
+# install.packages('tools')
+library(tools)
+# install.packages('rgeos')
+library(rgeos)
+# install.packages('terra')
+library(terra)
+# install.packages('stringr')
+library(stringr)
+# install.packages('raster')
+library(raster)
+# install.packages('ncdf4')
+library(ncdf4)
+# install.packages('marmap')
+library(marmap)
+# install.packages('ggtext')
+library(ggtext)
+
+
+```
+
+#VAST Fixing Plots
+```{r, fig.width = 8, fig.height = 7}
+sable_squid_index <- read.csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_sable_squid_Index_1982_2022.csv")) %>% 
+  mutate(survey_code = ifelse(Time == 2002 | Time == 2004 | Time == 2008 | 
+                              Time == 2010 | Time == 2012 | Time == 2016, 
+                              "EBS (Shelf) and BSS (Slope) Survey", "EBS (Shelf) Survey")) 
+
+
+ggplot(data = sable_squid_index,
+       aes(x = Time, y = Estimate, 
+           ymin = Estimate - Std..Error.for.Estimate, ymax = Estimate + Std..Error.for.Estimate)) +
+  geom_point(aes(color = survey_code, shape = survey_code)) + 
+  geom_smooth(color = "black", alpha = 0.5) + 
+  scale_color_manual(values = c("goldenrod", "navy")) + 
+  geom_line() +
+  geom_linerange(color = "red", alpha = 0.5) + 
+  labs(x = "Year", y = "Index Estimate [kg]", color = "Survey Type", shape = "Survey Type", 
+       title = "Index of"~italic("A. fimbria")~ "with the density effect of" ~italic("B. magister,")~ "1982-2022") + 
+  theme(legend.position = "bottom")
+  
+ggsave(here::here("R", "epp_ceph_alaska", "Bmag_Afim_index_1982_2022.jpg"))
+
+```
+
+# get data
+```{r, include = FALSE}
+# ceph data, BSshelf, BSslope, AI, GOA
+b_mag_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "b_mag_raw_data.csv"))
+
+# scavenger data, BSshelf, BSslope, AI, GOA
+tan_crab_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "tanner_crab_raw_data.csv"))
+sablefish_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "sablefish_raw_data.csv"))
+
+# sablefish weight data
+sablefish_weight_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "sable_catch_ak.csv"))
+
+# ceph weight data
+b_mag_weight_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "ceph_catch_ak.csv"))
+  
+# sablefish length data
+sablefish_length_sex_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "sable_length_ak.csv"))
+  
+# ceph length data
+b_mag_length_sex_raw_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "ceph_length_ak.csv"))
+
+```
+
+# data cleaner
+```{r, include = FALSE}
+# tanner crab clean
+colnames(tan_crab_raw_data) <- c('year', 'region', 'survey', 'survey_ID', 'cruise', 'haul', 
+                               'stratum', 'station', 'vessel_name', 'vessel',
+                               'date_time', 'latitude', 'longitude', 'species_code',
+                               'common_name', 'report_name_scientific', 'taxon_confidence',
+                               'cpue_kg_ha', 'cpue_kg_km2', 'cpue_kg_1000_km2', 
+                               'cpue_num_ha', 'cpue_num_km2', 'cpue_num_1000_kg2', 
+                               'weight', 'count', 'gear_temperature', 'surface_temperature',
+                               'bottom_depth', 'distance_fished', 'net_width', 
+                               'net_height', 'area_swept_ha', 'duration_hr')
+tan_crab_clean <- tan_crab_raw_data %>% 
+  dplyr::select(-taxon_confidence, -cpue_kg_1000_km2, -cpue_num_km2, -cpue_num_1000_kg2,
+         -net_height, -duration_hr) %>% 
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI") %>% 
+  mutate(date = str_extract(date_time, ".{1,10}")) %>% 
+  mutate(time = str_extract(date_time, ".{1,8}$"))%>% 
+  dplyr::filter(longitude < -160) %>%
+  mutate(species_type = "Tanner Crab")
+
+
+# sablefish clean
+colnames(sablefish_raw_data) <- c('year', 'region', 'survey', 'survey_ID', 'cruise', 'haul', 
+                               'stratum', 'station', 'vessel_name', 'vessel',
+                               'date_time', 'latitude', 'longitude', 'species_code',
+                               'common_name', 'report_name_scientific', 'taxon_confidence',
+                               'cpue_kg_ha', 'cpue_kg_km2', 'cpue_kg_1000_km2', 
+                               'cpue_num_ha', 'cpue_num_km2', 'cpue_num_1000_kg2', 
+                               'weight', 'count', 'gear_temperature', 'surface_temperature',
+                               'bottom_depth', 'distance_fished', 'net_width', 
+                               'net_height', 'area_swept_ha', 'duration_hr')
+sablefish_clean <- sablefish_raw_data %>% 
+  dplyr::select(-taxon_confidence, -cpue_kg_1000_km2, -cpue_num_km2, -cpue_num_1000_kg2,
+         -net_height, -duration_hr) %>% 
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI") %>% 
+  mutate(date = str_extract(date_time, ".{1,10}")) %>% 
+  mutate(time = str_extract(date_time, ".{1,8}$"))%>% 
+  dplyr::filter(longitude < -160) %>% 
+  mutate(species_type = "A. fimbria") %>% 
+  mutate(region_gen = str_extract(region, "B|A"))
+  
+
+
+# berryteuthis magister clean
+colnames(b_mag_raw_data) <- c('year', 'region', 'survey', 'survey_ID', 'cruise', 'haul', 
+                               'stratum', 'station', 'vessel_name', 'vessel',
+                               'date_time', 'latitude', 'longitude', 'species_code',
+                               'common_name', 'report_name_scientific', 'taxon_confidence',
+                               'cpue_kg_ha', 'cpue_kg_km2', 'cpue_kg_1000_km2', 
+                               'cpue_num_ha', 'cpue_num_km2', 'cpue_num_1000_kg2', 
+                               'weight', 'count', 'gear_temperature', 'surface_temperature',
+                               'bottom_depth', 'distance_fished', 'net_width', 
+                               'net_height', 'area_swept_ha', 'duration_hr')
+b_mag_clean <- b_mag_raw_data %>% 
+  dplyr::select(-taxon_confidence, -cpue_kg_1000_km2, -cpue_num_km2, -cpue_num_1000_kg2,
+         -net_height, -duration_hr) %>% 
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI") %>% 
+  mutate(date = str_extract(date_time, ".{1,10}")) %>% 
+  mutate(time = str_extract(date_time, ".{1,8}$")) %>% 
+  dplyr::filter(longitude < -160) %>% 
+  mutate(species_type = "B. magister") %>% 
+  mutate(region_gen = str_extract(region, "B|A"))
+
+tempbmag <- b_mag_raw_data %>% 
+  dplyr::filter(longitude > 0)
+tempsable <- sablefish_raw_data %>% 
+  dplyr::filter(longitude > 0)
+
+# scavenger join
+  # species included: tanner crab (all), sablefish
+scavenger_clean <- full_join(sablefish_clean, tan_crab_clean)
+
+# all species join
+  # species included: all in "scavenger_clean" + berryteuthis magister
+b_mag_and_scavenger <- full_join(b_mag_clean, scavenger_clean)
+
+# b_mag and sablefish join
+b_mag_and_sablefish <- full_join(b_mag_clean, sablefish_clean)
+
+# b_mag and tanner crab join
+b_mag_and_tan_crab <- full_join(b_mag_clean, tan_crab_clean)
+
+# sablefish weight cleaning
+sablefish_weight <- sablefish_weight_raw_data %>% 
+  mutate(year = str_extract(cruise, "^\\d{4}")) %>%
+  mutate(mean_weight_fish = weight / number_fish) %>% 
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI" | region == "BS") %>% 
+  mutate(year = as.numeric(year)) %>% 
+  dplyr::filter(year > 1982) %>% 
+  mutate(report_name_scientific = "Sablefish, A. fimbria")
+
+# b_mag weight cleaning
+b_mag_weight <- b_mag_weight_raw_data %>% 
+  mutate(year = str_extract(cruise, "^\\d{4}")) %>%
+  mutate(year = as.numeric(year)) %>% 
+  dplyr::filter(year > 1982) %>% 
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI" | region == "BS") %>% 
+  dplyr::filter(species_code == 79210) %>% 
+  mutate(mean_weight_fish = weight / number_fish) %>% 
+  mutate(report_name_scientific = "Magister Armhook Squid, B. magister")
+
+# joining b_mag and sablefish weight
+b_mag_sablefish_weight <- full_join(b_mag_weight, sablefish_weight)
+
+
+# sablefish length/sex cleaning
+sablefish_length_sex_temp1 <- sablefish_length_sex_raw_data %>% 
+  mutate(year = str_extract(cruise, "^\\d{4}")) %>%
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI" | region == "BS") %>% 
+  mutate(year = as.numeric(year)) %>% 
+  dplyr::filter(year > 1982) %>% 
+  mutate(report_name_scientific = "Sablefish, A. fimbria") %>% 
+  mutate(n_times = frequency)
+
+sablefish_length_sex_final <- as.data.frame(lapply(sablefish_length_sex_temp1, rep, sablefish_length_sex_temp1$n_times)) %>% 
+  mutate(sex = as.character(sex))
+
+# b_mag length/sex cleaning
+b_mag_length_sex_temp1 <- b_mag_length_sex_raw_data %>% 
+  mutate(year = str_extract(cruise, "^\\d{4}")) %>%
+  dplyr::filter(region == "BSS" | region == "EBS" | region == "AI" | region == "BS") %>% 
+  mutate(year = as.numeric(year)) %>% 
+  dplyr::filter(year > 1982) %>% 
+  mutate(report_name_scientific = "Magister Armhook Squid, B. magister") %>% 
+  mutate(n_times = frequency) %>% 
+  mutate(sex = as.character(sex))
+
+b_mag_length_sex_final <- as.data.frame(lapply(b_mag_length_sex_temp1, rep, b_mag_length_sex_temp1$n_times)) 
+
+b_mag_sablefish_length_sex <- full_join(b_mag_length_sex_final, sablefish_length_sex_final)
+
+
+```
+
+#tester// done testing!
+```{r}
+# test_1_raw <- read.csv(here::here("data", "test_1.csv"))
+# 
+# test_1 <- test_1_raw %>% 
+#   mutate(n_times = frequency)
+# 
+# test_1_a <- test_1_raw %>%
+#   mutate(n_times = frequency) %>%
+#     dplyr::filter(n_times == 1)
+# 
+# test_1_b <- test_1_raw %>%
+#   mutate(n_times = frequency) %>%
+#     dplyr::filter(n_times != 1)
+# 
+# test_1_ba <- as.data.frame(lapply(test_1_b, rep, test_1_b$n_times))
+#   
+# test_11 <- as.data.frame(lapply(test_1, rep, test_1$n_times)) 
+
+  
+  # mutate(length = as.character(length)) %>%
+  # mutate(sex = as.character(sex))
+
+# test_2ex <-test_1[rep(seq_len(nrow(test_1)), test_1$ntimes),]
+
+```
+
+# altering data
+```{r, include = FALSE}
+
+# summing CPUE 
+b_mag_clean_sum <- b_mag_clean %>%  
+  group_by(region_gen, year, common_name) %>%
+  summarize(cpue_num_ha_sum = sum(cpue_num_ha, na.rm = TRUE)) 
+
+sablefish_clean_sum <- sablefish_clean %>%  
+  group_by(region_gen, year, common_name) %>% 
+  summarize(cpue_num_ha_sum = sum(cpue_num_ha, na.rm = TRUE))
+
+b_mag_and_sablefish_sum <- full_join(b_mag_clean_sum, sablefish_clean_sum)
+
+```
+## export clean data 
+```{r, include = FALSE}
+write_csv(x = b_mag_clean, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "b_mag_clean.csv"))
+write_csv(x = sablefish_clean,
+          file = here::here("R", "epp_ceph_alaska", "output_data", "sablefish_clean.csv"))
+```
+
+
+
+
+# bathymetry & geography info
+```{r, include = FALSE}
+AK_BSAI_b_mag_scvg_bathy <- getNOAA.bathy(lon1 = -180, lon2 = -160,
+                                          lat1 = 50, lat2 = 62,
+                                          resolution = 1, keep = TRUE)
+
+# vignette <-getNOAA.bathy(lon1 = 140, lon2 = 155, lat1 = -13, lat2 = 0, resolution =10)
+
+AK_BSAI_b_mag_scvg_bathy_plot = autoplot.bathy(AK_BSAI_b_mag_scvg_bathy, geom=c("tile", "contour"))+
+  scale_fill_gradient2(low = "dodgerblue4", mid = "gainsboro", high = "darkgreen")
+
+AK_BSAI_b_mag_scvg_location <- c(-180, 50, -160, 60)
+
+AK_BSAI_b_mag_scvg_map_base <- get_map(location = AK_BSAI_b_mag_scvg_location, source = "stamen",
+                                  maptype = "terrain", crop = FALSE, color = "color")
+
+AK_BSAI_b_mag_scvg_bathy_plot_grey = autoplot.bathy(AK_BSAI_b_mag_scvg_bathy, geom=c("tile", "contour"))+
+  scale_fill_gradient2(low = "grey30", high = "grey 70")
+
+
+
+```
+
+
+# figures
+## single species maps
+### Berryteuthis magister
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# b_mag map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.25, color = "orange") + 
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. magister abundance map, all time, normal")
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_abund_all_time.jpg"))
+
+
+# b_mag map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.25, color = "orange") + 
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "B. magister abundance map, all time, bathymetry")
+  
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_abund_all_time_bathy.jpg"))
+
+```
+
+
+### Tanner crab
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# tan_crab map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = tan_crab_clean, alpha = 0.25, color = "aquamarine4") + 
+  labs(x = "Longitude", y = "Latitude", 
+       title = "Tanner Crab abundance map, all time, normal")
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_tan_crab_abund_all_time.jpg"))
+
+
+# tan_crab map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = tan_crab_clean, alpha = 0.25, color = "aquamarine4") + 
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "Tanner Crab abundance map, all time, bathymetry")
+  
+ggsave(here::here("figures_ceph_scavenger", "BSAI_tan_crab_abund_all_time_bathy.jpg"))
+
+```
+
+
+### Sablefish
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# sablefish map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = sablefish_clean, alpha = 0.25, color = "deeppink4") + 
+  labs(x = "Longitude", y = "Latitude", 
+       title = "Sablefish abundance map, all time, normal")
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_sablefish_abund_all_time.jpg"))
+
+
+# sablefish map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot + 
+  geom_point(aes(x = longitude, y = latitude, size = cpue_num_ha),
+             data = sablefish_clean, alpha = 0.25, color = "deeppink4") + 
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "Sablefish abundance map, all time, bathymetry")
+  
+ggsave(here::here("figures_ceph_scavenger", "BSAI_sablefish_abund_all_time_bathy.jpg"))
+
+```
+
+
+##  scavenger maps 
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# scavenger map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = scavenger_clean, alpha = 0.25) + 
+  labs(x = "Longitude", y = "Latitude", 
+       title = "Scavenger abundance map, all time, normal") + 
+  scale_color_manual(
+      values = c("deeppink4", "aquamarine4"))
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_scavenger_abund_all_time.jpg"))
+
+
+# scavenger map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = scavenger_clean, alpha = 0.25) + 
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "Scavenger abundance map, all time, bathymetry") + 
+  scale_color_manual(
+      values = c("deeppink4", "aquamarine4"))
+  
+ggsave(here::here("figures_ceph_scavenger", "BSAI_scavenger_abund_all_time_bathy.jpg"))
+
+```
+
+
+## b mag vs scavenger maps
+### b mag/all scavenger
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# scavenger map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_scavenger, alpha = 0.25) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = sablefish_clean, alpha = 0.15, color = "deeppink4") + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.15, color = "orange") + 
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. magister vs Scavenger abundance map, all time, normal") + 
+  scale_color_manual(
+      values = c("orange", "deeppink4", "aquamarine4"))
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_vs_scavenger_abund_all_time.jpg"))
+
+
+# scavenger map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot +
+  geom_point(aes(x = longitude, y = latitude,
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_scavenger, alpha = 0.25) +
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = sablefish_clean, alpha = 0.15, color = "deeppink4") + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.15, color = "orange") + 
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "B. magister vs Scavenger abundance map, all time, bathymetry") +
+  scale_color_manual(
+      values = c("orange", "deeppink4", "aquamarine4"))
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_vs_scavenger_abund_all_time_bathy.jpg"))
+```
+
+
+### b mag/sablefish
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# b mag vs sablefish map, normal
+# ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+#   geom_point(aes(x = longitude, y = latitude, 
+#                  size = cpue_num_ha, color = species_type),
+#              data = b_mag_and_sablefish, alpha = 0.25) +  
+#   labs(x = "Longitude", y = "Latitude", 
+#        title = "B. Magister vs Sablefish abundance map, all time, normal") +
+#   scale_color_manual(
+#       values = c("orange", "deeppink4"))
+# 
+# ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_vs_sablefish_abund_all_time.jpg"))
+# 
+# 
+# # b mag vs sablefish  map, bathy
+# AK_BSAI_b_mag_scvg_bathy_plot + 
+#   geom_point(aes(x = longitude, y = latitude, 
+#                  size = cpue_num_ha, color = species_type),
+#              data = b_mag_and_sablefish, alpha = 0.25) +
+#   labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+#        color = "Species Name", size = "CPUE, Number per Hectare",
+#        title = ~italic("B. magister")~ "vs." ~italic("A. fimbria,")~ "Bathymetry and Abundance Map, 1982-2022") + 
+#   scale_color_manual(
+#       values = c("deeppink4", "orange")) + 
+#   theme(axis.title = ggtext::element_markdown())
+#   
+# ggsave(here::here("R", "epp_ceph_alaska", "figures_ceph_scavenger", "BSAI_b_mag_vs_sablefish_abund_all_time_bathy_FINAL.jpg"))
+
+# b mag vs sablefish  map, bathy greyscale
+AK_BSAI_b_mag_scvg_bathy_plot_grey + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, shape = species_type),
+             data = b_mag_and_sablefish, alpha = 0.25) +
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       shape = "Species Name", size = "CPUE, Number per Hectare",
+       title = ~italic("B. magister")~ "vs." ~italic("A. fimbria,")~ "Bathymetry and Abundance Map, 1982-2022") + 
+  scale_color_manual(
+      values = c("grey0", "grey100")) +
+  theme(axis.title = ggtext::element_markdown())
+  
+ggsave(here::here("R", "epp_ceph_alaska", "figures_ceph_scavenger", "BSAI_b_mag_vs_sablefish_abund_all_time_bathy_greyscaleFINAL.jpg"))
+```
+
+
+### b mag/tanner crab
+```{r, fig.width = 8, fig.height = 7, echo = FALSE}
+# b mag vs tanner crab map, normal
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_tan_crab, alpha = 0.25) +  
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.15, color = "orange") +
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Tanner Crab abundance map, all time, normal") +
+  scale_color_manual(
+      values = c("orange", "aquamarine4"))
+
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_vs_tan_crab_abund_all_time.jpg"))
+
+
+# b mag vs tanner crab  map, bathy
+AK_BSAI_b_mag_scvg_bathy_plot + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_tan_crab, alpha = 0.25) +
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha),
+             data = b_mag_clean, alpha = 0.15, color = "orange") +
+  labs(x = "Longitude", y = "Latitude", fill = "Elevation",
+       title = "B. Magister vs Tanner Crab abundance map, all time, bathymetry") + 
+  scale_color_manual(
+      values = c("orange", "aquamarine4"))
+  
+ggsave(here::here("figures_ceph_scavenger", "BSAI_b_mag_vs_tan_crab_abund_all_time_bathy.jpg"))
+```
+
+## per year maps (no bahty)
+### b mag/sablefish facet per year overlap map
+```{r, fig.width = 16, fig.height = 14, echo = FALSE}
+# Facet by year
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, facet by year, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4")) + 
+  facet_wrap(~year)
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_facet.jpg"))
+```
+
+### b mag/sablefish per year important 
+```{r, fig.width = 8, fig.height = 7, include = FALSE}
+# 1982 
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1982, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1982, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1982.jpg"))
+
+# 1983
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1983, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1983, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1983.jpg"))
+
+# 1984
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1984, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1984, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1984.jpg"))
+
+# 1985
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1985, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1985, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1985.jpg"))
+
+# 1986
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1986, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1986, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1986.jpg"))
+
+# 1987
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1987, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1987, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1987.jpg"))
+
+# 1988
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1988, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1988, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1988.jpg"))
+
+# 1989
+ggmap(AK_BSAI_b_mag_scvg_map_base) +
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1989, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1989, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1989.jpg"))
+
+# 1990
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1990, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1990, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1990.jpg"))
+
+# 1991
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1991, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1991, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1991.jpg"))
+
+# 1992
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1992, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1992, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1992.jpg"))
+
+# 1993
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1993, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1993, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1993.jpg"))
+
+# 1994
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1994, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1994, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1994.jpg"))
+
+# 1995
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1995, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1995, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1995.jpg"))
+
+# 1996
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1996, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1996, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1996.jpg"))
+
+# 1997
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1997, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1997, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1997.jpg"))
+
+# 1998
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1998, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1998, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1998.jpg"))
+
+# 1999
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_1999, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 1999, normal") +
+  scale_color_manual(
+      values = c("deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_1999.jpg"))
+
+# 2000
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2000, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2000, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2000.jpg"))
+
+# 2001
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2001, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2001, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2001.jpg"))
+
+# 2002
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2002, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2002, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2002.jpg"))
+
+# 2003
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2003, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2003, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2003.jpg"))
+
+# 2004
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2004, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2004, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2004.jpg"))
+
+# 2005
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2005, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2005, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2005.jpg"))
+
+# 2006
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2006, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2006, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2006.jpg"))
+
+# 2007
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2007, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2007, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2007.jpg"))
+
+# 2008
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2008, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2008, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2008.jpg"))
+
+# 2009
+ggmap(AK_BSAI_b_mag_scvg_map_base) + 
+  geom_point(aes(x = longitude, y = latitude, 
+                 size = cpue_num_ha, color = species_type),
+             data = b_mag_and_sablefish_2009, alpha = 0.25) +  
+  labs(x = "Longitude", y = "Latitude", 
+       title = "B. Magister vs Sablefish abundance map, 2009, normal") +
+  scale_color_manual(
+      values = c("orange", "deeppink4"))
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_over_time_maps", "BSAI_b_mag_vs_sablefish_abund_2009.jpg"))
+
+# 2010
+
+```
+
+
+
+
+##inter-species abundance graphs
+```{r, echo = FALSE}
+# Sablefish and B. Mag abundance over time
+ggplot(data = b_mag_and_sablefish_sum,
+       aes(x = year, y = cpue_num_ha_sum)) +
+  geom_line(aes(color = common_name, linetype = region_gen)) + 
+  labs(x = "Year", y = "Abundance (cpue_num_ha)",
+       title = "Sablefish and B. magister abundance over time",
+       linetype = "Region Letter") + 
+  scale_color_manual(
+      values = c("orange", "deeppink4"))+
+  scale_y_continuous(trans = 'log10')
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_abund_over_time.jpg"))
+
+
+# Sablefish vs B. Mag abundance ????
+
+```
+
+##sex/lenght/weight figs
+### sex
+from sable_length_ak.csv and ceph_lenght_ak.csv
+```{r, echo = FALSE}
+# sablefish, sex per year
+ggplot(data = sablefish_length_sex_final,
+       aes(x = year, color = sex, fill = sex)) +
+  geom_histogram() +
+  labs(x = "Year", y = "Count", title = "sablefish sex ratios over time")
+
+ggsave(here::here("figures_ceph_scavenger", "sablefish_sex_ratio_per_year_sampled.jpg"))
+
+
+# b_mag, sex per year
+ggplot(data = b_mag_length_sex_final,
+       aes(x = year, color = sex, fill = sex)) +
+  geom_histogram() +
+  labs(x = "Year", y = "Count", title = "B. magister sex ratios over time")
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sex_ratio_per_year_sampled.jpg"))
+
+```
+
+### length
+from sable_length_ak.csv and ceph_lenght_ak.csv
+```{r}
+# sablefish, length 
+ggplot(data = sablefish_length_sex_final, 
+       aes(x = year, y = length)) +
+  geom_smooth()+
+  # geom_jitter(aes(alpha = 0.02))+
+  labs(x = "Time", y = "Length (mm FL)",
+       title = "Sablefish length over time")
+
+ggsave(here::here("figures_ceph_scavenger", "sablefish_length_over_time.jpg"))
+
+
+# b_mag, length
+ggplot(data = b_mag_length_sex_final, 
+       aes(x = year, y = length)) +
+  geom_smooth()+
+  # geom_jitter(aes(alpha = 0.02))+
+  labs(x = "Time", y = "Length (mm ML)",
+       title = "B. magister length over time")
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_length_over_time.jpg"))
+
+
+# sablefish and b_mag, length
+
+ggplot(data = b_mag_sablefish_length_sex,
+       aes(x = year, y = length)) + 
+  geom_smooth(data = b_mag_length_sex_final,
+              aes(color = report_name_scientific, fill = report_name_scientific)) + 
+  geom_smooth(data = sablefish_length_sex_final,
+              aes(color = report_name_scientific, fill = report_name_scientific)) +
+  labs(x = "Time", y = "Length",
+       title = "B. magister and Sablefish length over time")
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_length_over_time.jpg"))
+
+```
+
+### weight 
+from sable_catch_ak.csv and ceph_catch_ak.csv 
+```{r, fig.width = 14.36, fig.height = 8.86}
+# sablefish mean weight over time
+ggplot(data = sablefish_weight, 
+       aes(x = year, y = mean_weight_fish)) +
+  geom_smooth()+
+  geom_jitter()+
+  labs(x = "Time", y = "Average weight per fish per haul",
+       title = "Sablefish mean weight over time")
+
+ggsave(here::here("figures_ceph_scavenger", "sablefish_mean_weight_over_time.jpg"))
+
+
+# sablefish mean weight per year sampled
+ggplot(data = sablefish_weight, 
+       aes(x = year, y = mean_weight_fish)) +  
+  geom_violin(scale = "count", draw_quantiles = c(0.25, 0.5, 0.75)) +
+  geom_jitter() +
+    labs(x = "Years Sampled", y = "Average weight per fish per haul",
+       title = "Sablefish mean weight per year sampled")
+
+
+ggsave(here::here("figures_ceph_scavenger", "sablefish_mean_weight_per_year_sampled.jpg"))
+
+# b_mag mean weight over time 
+ggplot(data = b_mag_weight,
+       aes(x = year, y = mean_weight_fish))+
+  geom_smooth()+
+  geom_jitter()+
+  labs(x = "Time", y = "Average weight per fish per hual",
+       title = "B. magister weight over time")
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_weight_over_time.jpg"))
+
+# b_mag mean weight per year sampled
+ggplot(data = b_mag_weight, 
+       aes(x = year, y = mean_weight_fish)) +  
+  geom_violin(scale = "count", draw_quantiles = c(0.25, 0.5, 0.75)) +
+  geom_jitter() +
+    labs(x = "Years Sampled", y = "Average weight per fish per haul",
+       title = "B. magister mean weight per year sampled")
+
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_mean_weight_per_year_sampled.jpg"))
+
+# sable/b_mag combined weight over time ??
+
+ggplot(data = b_mag_sablefish_weight,
+       aes(x = year, y = mean_weight_fish)) + 
+  geom_smooth(data = b_mag_weight,
+              aes(color = report_name_scientific, fill = report_name_scientific)) + 
+  geom_smooth(data = sablefish_weight,
+              aes(color = report_name_scientific, fill = report_name_scientific)) +
+  labs(x = "Time", y = "Average weight per fish per hual (g)",
+       title = "B. magister and Sablefish weight over time")
+
+ggsave(here::here("figures_ceph_scavenger", "b_mag_sablefish_mean_weight_over_time.jpg"))
+
+```
+
+
+
+
