@@ -1,0 +1,491 @@
+---
+title: "VAST_Formatter.Rmd"
+author: "Martin A. Gonzalez"
+date: '2023-1-15'
+output: html_document
+purpose: coding file to format B. magister and Sablefish haul data for input into VAST
+---
+
+# libraries
+```{r, include = FALSE}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+    # install.packages("TMB")
+    # library(TMB)
+    # install.packages("INLA", repos=c(getOption("repos"), INLA="https://inla.r-inla-download.org/R/stable"), dep=TRUE)
+    # library(INLA)
+    # install.packages('devtools')
+    # library(devtools)
+    # devtools::install_github("james-thorson/FishStatsUtils", INSTALL_opts="--no-staged-install")
+    # library(FishStatsUtils)
+    # devtools::install_github("james-thorson/VAST", INSTALL_opts="--no-staged-install")
+    # library(VAST)
+```
+
+
+# get data
+```{r, include = FALSE}
+#b_mag_test_check <- read.csv(here::here("R", "epp_ceph_alaska", "data", "test BS Bmag data only.csv"))
+
+b_mag_clean <- read.csv(here::here("R", "epp_ceph_alaska", "output_data", "b_mag_clean.csv"))
+sablefish_clean <- read.csv(here::here("R", "epp_ceph_alaska", "output_data", "sablefish_clean.csv"))
+
+# OLD_haul_data <- read.csv(here::here("R", "epp_ceph_alaska", "output_data", "clean_haul_data.csv"))
+haul_data <- read.csv(here::here("R", "epp_ceph_alaska", "data", "survey_hauls_good_ak.csv"))
+```
+
+#BS Only
+##haul data
+```{r}
+# haul_data_clean
+    # change this haul data for one with 2022 included
+VAST_BS_haul_data <- haul_data %>% 
+  dplyr::filter(region == "BS") %>% 
+  dplyr::filter(year >= 1982) %>% 
+  distinct(year, start_longitude, start_latitude, vessel) %>%
+  dplyr::filter(start_longitude < 0) %>%
+  dplyr::filter(start_longitude > -180) %>% 
+  mutate(haul_cpue_kg_km2 = 0) %>%
+  # mutate(haul_cpue_num_ha = 0) %>% 
+  mutate(Lon = round(start_longitude, 4)) %>%
+  mutate(Lat = round(start_latitude, 4)) %>% 
+  mutate(Year = year) %>% 
+  mutate(haul_Vessel = vessel) %>%
+  
+  dplyr::select(Year, Lat, Lon, haul_cpue_kg_km2, haul_Vessel)  
+
+```
+
+##fish data
+```{r, include = FALSE}
+# Columnes Needed: Catch_CPUE, Year, Lat, Long
+# B. magister
+b_mag_tmp_BS <- b_mag_clean %>% 
+  dplyr::filter(region == "EBS"| region == "BSS") %>% 
+  dplyr::filter(longitude < 0) %>%
+  dplyr::filter(longitude > -180) %>% 
+  mutate(b_mag_cpue_kg_km2 = cpue_kg_km2) %>%
+  mutate(Lon = round(longitude, 4)) %>% 
+  mutate(Lat = round(latitude, 4)) %>% 
+  mutate(b_mag_Vessel = 0) %>% 
+  mutate(Year = year) %>% 
+  dplyr::select(Year, Lat, Lon, b_mag_cpue_kg_km2, b_mag_Vessel) %>%
+  drop_na(b_mag_cpue_kg_km2)
+
+bmag1_BS <- full_join(b_mag_tmp_BS, VAST_BS_haul_data, by = c("Year", "Lat", "Lon")) %>% 
+  distinct(Year, Lat, Lon, b_mag_cpue_kg_km2, haul_cpue_kg_km2, 
+           b_mag_Vessel, haul_Vessel)
+
+VAST_b_mag_BS <- bmag1_BS %>%  
+            unite(Catch_KG_km2, c(b_mag_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>% 
+            unite(Vessel, c(b_mag_Vessel, haul_Vessel), na.rm = TRUE) %>% 
+            mutate(AreaSwept_km2 = 1)
+
+VAST_b_mag_BS$Catch_KG_km2 <- gsub('_0', '', VAST_b_mag_BS$Catch_KG_km2) %>%
+  as.numeric()
+VAST_b_mag_BS$Vessel <- gsub('0_', '', VAST_b_mag_BS$Vessel) %>%
+  as.numeric()
+
+VAST_b_mag_BS <- add_row(VAST_b_mag_BS, Year = 2020, Lat = 54.7, Lon = -166.9, Catch_KG_km2 = 0.000001, Vessel = 999, AreaSwept_km2 = 1)
+
+# B mag Curiousity for VAST run
+
+VAST_b_mag_nonenc_excluded_BS <- VAST_b_mag_BS
+
+b_mag_non_enc_yrs_BS <- VAST_b_mag_BS %>% 
+  group_by(Year) %>% 
+  summarize(yr_catch = sum(Catch_KG_km2)) %>% 
+  dplyr::filter(yr_catch == 0)
+
+ VAST_b_mag_nonenc_excluded_BS <- VAST_b_mag_nonenc_excluded_BS %>%
+  dplyr::filter(!Year %in% b_mag_non_enc_yrs_BS$Year) %>% 
+  dplyr::filter(Year != 2020)
+
+# B mag smaller time series
+ 
+VAST_b_mag_BS2002_2016 <- VAST_b_mag_BS %>% 
+  dplyr::filter(Year >= 2002 & Year <= 2016)
+
+VAST_b_mag_BS2002_2016BSS <- VAST_b_mag_BS %>% 
+  dplyr::filter(Year == 2002 | Year == 2004 | Year == 2008 | 
+                Year == 2010 | Year == 2012 | Year == 2016)
+ 
+# --------------------------------------------------------------------------------
+# Squid 2
+ b_mag_tmp_BSS_only <- b_mag_clean %>% 
+  dplyr::filter(region == "BSS") %>% 
+  dplyr::filter(longitude < 0) %>%
+  dplyr::filter(longitude > -180) %>% 
+  mutate(b_mag_cpue_kg_km2 = cpue_kg_km2) %>%
+  mutate(Lon = round(longitude, 4)) %>% 
+  mutate(Lat = round(latitude, 4)) %>% 
+  mutate(b_mag_Vessel = 0) %>% 
+  mutate(Year = year) %>% 
+  dplyr::select(Year, Lat, Lon, b_mag_cpue_kg_km2, b_mag_Vessel) %>%
+  drop_na(b_mag_cpue_kg_km2)
+
+bmag1_BSS_only <- full_join(b_mag_tmp_BSS_only, VAST_BS_haul_data, by = c("Year", "Lat", "Lon")) %>% 
+  distinct(Year, Lat, Lon, b_mag_cpue_kg_km2, haul_cpue_kg_km2, 
+           b_mag_Vessel, haul_Vessel)
+
+VAST_b_mag_BSS_only <- bmag1_BSS_only %>%  
+            unite(Catch_KG_km2, c(b_mag_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>% 
+            unite(Vessel, c(b_mag_Vessel, haul_Vessel), na.rm = TRUE) %>% 
+            mutate(AreaSwept_km2 = 1)
+
+VAST_b_mag_BSS_only$Catch_KG_km2 <- gsub('_0', '', VAST_b_mag_BSS_only$Catch_KG_km2) %>%
+  as.numeric()
+VAST_b_mag_BSS_only$Vessel <- gsub('0_', '', VAST_b_mag_BSS_only$Vessel) %>%
+  as.numeric()
+
+# B mag Curiousity for VAST run
+
+VAST_b_mag_nonenc_excluded_BSS_only <- VAST_b_mag_BSS_only
+
+b_mag_non_enc_yrs_BSS_only <- VAST_b_mag_BSS_only %>% 
+  group_by(Year) %>% 
+  summarize(yr_catch = sum(Catch_KG_km2)) %>% 
+  dplyr::filter(yr_catch == 0)
+
+ VAST_b_mag_nonenc_excluded_BSS_only <- VAST_b_mag_nonenc_excluded_BSS_only %>%
+  dplyr::filter(!Year %in% b_mag_non_enc_yrs_BSS_only$Year) %>% 
+  dplyr::filter(Year != 2020)
+# --------------------------------------------------------------------------------
+# Squid 3: EBS only 
+ b_mag_tmp_EBS_only <- b_mag_clean %>% 
+  dplyr::filter(region == "EBS") %>% 
+  dplyr::filter(longitude < 0) %>%
+  dplyr::filter(longitude > -180) %>% 
+  mutate(b_mag_cpue_kg_km2 = cpue_kg_km2) %>%
+  mutate(Lon = round(longitude, 4)) %>% 
+  mutate(Lat = round(latitude, 4)) %>% 
+  mutate(b_mag_Vessel = 0) %>% 
+  mutate(Year = year) %>% 
+  dplyr::select(Year, Lat, Lon, b_mag_cpue_kg_km2, b_mag_Vessel) %>%
+  drop_na(b_mag_cpue_kg_km2)
+
+bmag1_EBS_only <- full_join(b_mag_tmp_EBS_only, VAST_BS_haul_data, by = c("Year", "Lat", "Lon")) %>% 
+  distinct(Year, Lat, Lon, b_mag_cpue_kg_km2, haul_cpue_kg_km2, 
+           b_mag_Vessel, haul_Vessel)
+
+VAST_b_mag_EBS_only <- bmag1_BSS_only %>%  
+            unite(Catch_KG_km2, c(b_mag_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>% 
+            unite(Vessel, c(b_mag_Vessel, haul_Vessel), na.rm = TRUE) %>% 
+            mutate(AreaSwept_km2 = 1)
+
+VAST_b_mag_EBS_only$Catch_KG_km2 <- gsub('_0', '', VAST_b_mag_EBS_only$Catch_KG_km2) %>%
+  as.numeric()
+VAST_b_mag_EBS_only$Vessel <- gsub('0_', '', VAST_b_mag_EBS_only$Vessel) %>%
+  as.numeric() 
+ 
+ 
+ 
+# --------------------------------------------------------------------------------
+# Sablefish
+sablefish_tmp_BS <- sablefish_clean %>% 
+  dplyr::filter(region == "EBS" | region == "BSS") %>% 
+  dplyr::filter(longitude < 0) %>%
+  dplyr::filter(longitude > -180) %>% 
+  mutate(sable_cpue_kg_km2 = cpue_kg_km2) %>%
+  mutate(Lon = round(longitude, 4)) %>% 
+  mutate(Lat = round(latitude, 4)) %>% 
+  mutate(sable_Vessel = 0) %>% 
+  mutate(Year = year) %>% 
+  dplyr::select(Year, Lat, Lon, sable_cpue_kg_km2, sable_Vessel,) %>%
+  drop_na(sable_cpue_kg_km2)
+
+sable1_BS <- full_join(sablefish_tmp_BS, VAST_BS_haul_data, by = c("Year", "Lat", "Lon")) %>% 
+  distinct(Year, Lat, Lon, sable_cpue_kg_km2, haul_cpue_kg_km2,
+           sable_Vessel, haul_Vessel)
+
+VAST_sablefish_BS <- sable1_BS %>% 
+  unite(Catch_KG_km2, c(sable_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>% 
+  unite(Vessel, c(sable_Vessel, haul_Vessel), na.rm = TRUE) %>% 
+  mutate(AreaSwept_km2 = 1)
+
+VAST_sablefish_BS$Catch_KG_km2 <- gsub('_0', '', VAST_sablefish_BS$Catch_KG_km2) %>%
+as.numeric()
+VAST_sablefish_BS$Vessel <- gsub('0_', '', VAST_sablefish_BS$Vessel) %>%
+  as.numeric()
+
+# VAST_sablefish_BS <- add_row(VAST_sablefish_BS, Year = 2020, Lat = 54.7, Lon = -166.9, Catch_KG_km2 = 0.000001, Vessel = 999, AreaSwept_km2 = 1)
+      #FOCUS HERE ABOVE FOR NEXT RUN MARTIN
+
+
+VAST_sablefish_nonenc_included_BS <- VAST_sablefish_BS
+
+
+non_enc_yrs_BS <- VAST_sablefish_BS %>% 
+  group_by(Year) %>% 
+  summarize(yr_catch = sum(Catch_KG_km2)) %>% 
+  dplyr::filter(yr_catch == 0)
+
+ VAST_sablefish_BS <- VAST_sablefish_BS %>%
+  dplyr::filter(!Year %in% non_enc_yrs_BS$Year)
+ 
+# A fim smaller time series
+  
+VAST_sablefish_BS2002_2016 <- VAST_sablefish_BS %>% 
+  dplyr::filter(Year >= 2002 & Year <= 2016)
+
+VAST_sablefish_BS2002_2016select <- VAST_sablefish_BS %>% 
+  dplyr::filter(Year == 2002 | Year == 2004 | Year == 2008 | 
+                Year == 2010 | Year == 2012 | Year == 2016)
+
+```
+
+## data output
+```{r}
+table(b_mag_tmp_BS$Year)
+table(b_mag_tmp_BSS_only$Year)
+table(b_mag_tmp_EBS_only$Year)
+table(sablefish_tmp_BS$Year)
+
+# B mag (nonencounter years included, for use as a Covariate ontop a sablefish base model)
+write_csv(x = VAST_b_mag_BS, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS.csv"))
+
+# B mag (nonencounter years excluded)
+write_csv(x = VAST_b_mag_nonenc_excluded_BS,
+          file = here::here("R", "epp_ceph_alaska", "output_data", "nonenc_excluded_VAST_b_mag_BS.csv"))
+
+# B mag only BSS surveyes (nonencounter years excluded)
+write_csv(x = VAST_b_mag_nonenc_excluded_BSS_only,
+          file = here::here("R", "epp_ceph_alaska", "output_data", "VAST_b_mag_nonenc_excluded_BSS_only.csv"))
+
+# B mag EBS + BSS, 2002 - 2016
+write_csv(x = VAST_b_mag_BS2002_2016, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS_2002_2016.csv"))
+
+# B mag BSS, 2002 - 2016
+write_csv(x = VAST_b_mag_BS2002_2016BSS, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "VAST_b_mag_BS2002_2016BSS.csv"))
+
+
+# Sablefish (nonenc years excluded)
+write_csv(x = VAST_sablefish_BS,
+          file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish_BS.csv"))
+
+# Sablefish (nonencounter years included)
+write_csv(x = VAST_sablefish_nonenc_included_BS, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "nonenc_included_VAST_sablefish.csv"))
+
+
+# Sablefish BS, 2002 - 2016
+write_csv(x = VAST_sablefish_BS2002_2016, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish_BS_2002_2016.csv"))
+
+# Sablefish BS, 2002 - 2016, only overlap years with B mag
+write_csv(x = VAST_sablefish_BS2002_2016, 
+          file = here::here("R", "epp_ceph_alaska", "output_data", "VAST_sablefish_BS2002_2016select.csv"))
+
+```
+
+### check for years
+```{r, include = FALSE}
+b_mag_year_region <- b_mag_clean %>% 
+  dplyr::filter(region == "EBS"| region == "BSS")
+```
+
+#AI and BS Combined (Defunct, use as template)
+
+<!-- ## formating haul data, AI and BS Combined -->
+<!-- ```{r} -->
+<!-- # haul_data_clean -->
+<!--     # change this haul data for one with 2022 included -->
+<!-- VAST_haul_data <- haul_data %>%  -->
+<!--   dplyr::filter(region == "BS" | region == "AI") %>%  -->
+<!--   dplyr::filter(year >= 1982) %>%  -->
+<!--   distinct(year, start_longitude, start_latitude, vessel) %>%  -->
+<!--   mutate(haul_cpue_kg_km2 = 0) %>% -->
+<!--   # mutate(haul_cpue_num_ha = 0) %>%  -->
+<!--   mutate(Lon = round(start_longitude, 4)) %>% -->
+<!--   mutate(Lat = round(start_latitude, 4)) %>%  -->
+<!--   mutate(Year = year) %>%  -->
+<!--   mutate(haul_Vessel = vessel) %>% -->
+<!--   dplyr::select(Year, Lat, Lon, haul_cpue_kg_km2, haul_Vessel)   -->
+
+<!--   # dplyr::select(year, latitude, longitude, haul_cpue_num_ha)  -->
+
+
+
+<!-- ``` -->
+
+
+<!-- ## formatting data for VAST, AI and BS Combined -->
+<!-- ```{r, include = FALSE} -->
+<!-- # Columnes Needed: Catch_CPUE, Year, Lat, Long -->
+<!-- # B. magister -->
+<!-- b_mag_tmp <- b_mag_clean %>%  -->
+<!--   # mutate(b_mag_cpue_num_ha = cpue_num_ha) %>% -->
+<!--   mutate(b_mag_cpue_kg_km2 = cpue_kg_km2) %>% -->
+<!--   mutate(Lon = round(longitude, 4)) %>%  -->
+<!--   mutate(Lat = round(latitude, 4)) %>%  -->
+<!--   mutate(b_mag_Vessel = 0) %>%  -->
+<!--   mutate(Year = year) %>%  -->
+<!--   dplyr::select(Year, Lat, Lon, b_mag_cpue_kg_km2, b_mag_Vessel) %>% -->
+<!--   # dplyr::select(year, latitude, longitude, b_mag_cpue_num_ha) %>%  -->
+<!--   drop_na(b_mag_cpue_kg_km2) -->
+<!--   # drop_na(b_mag_cpue_num_ha)  -->
+
+<!-- bmag1 <- full_join(b_mag_tmp, VAST_haul_data, by = c("Year", "Lat", "Lon")) %>%  -->
+<!--   distinct(Year, Lat, Lon, b_mag_cpue_kg_km2, haul_cpue_kg_km2,  -->
+<!--            b_mag_Vessel, haul_Vessel) -->
+<!--   # distinct(year, latitude, longitude, b_mag_cpue_num_ha, haul_cpue_num_ha) -->
+
+<!-- VAST_b_mag <- bmag1 %>%   -->
+<!--             unite(Catch_KG_km2, c(b_mag_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>%  -->
+<!--             unite(Vessel, c(b_mag_Vessel, haul_Vessel), na.rm = TRUE) %>%  -->
+<!--             mutate(AreaSwept_km2 = 1) -->
+
+
+<!--     # unite(data = bmag1, cpue_num_ha, c(b_mag_cpue_num_ha, haul_cpue_num_ha), na.rm = TRUE) -->
+
+<!-- # VAST_b_mag$cpue_num_ha <- gsub('_0', '', VAST_b_mag$cpue_num_ha) %>%  -->
+<!--   # as.numeric() -->
+<!-- VAST_b_mag$Catch_KG_km2 <- gsub('_0', '', VAST_b_mag$Catch_KG_km2) %>% -->
+<!--   as.numeric() -->
+<!-- VAST_b_mag$Vessel <- gsub('0_', '', VAST_b_mag$Vessel) %>% -->
+<!--   as.numeric() -->
+
+
+
+<!-- # code to check with cruise and vessel code, everything lined up so did not include in final -->
+<!--     # b_mag_tmp2 <- b_mag_clean %>% -->
+<!--     #   mutate(b_mag_cpue_num_ha = cpue_num_ha) %>% -->
+<!--     #   mutate(longitude = round(longitude, 4)) %>% -->
+<!--     #   mutate(latitude = round(latitude, 4)) %>% -->
+<!--     #   dplyr::select(year, latitude, longitude, b_mag_cpue_num_ha, cruise, vessel) %>% -->
+<!--     #   drop_na(b_mag_cpue_num_ha) -->
+<!--     #  -->
+<!--     # bmag12 <- full_join(b_mag_tmp2, VAST_haul_data2, by = c("year", "latitude", "longitude", "cruise", "vessel")) %>% -->
+<!--     #   distinct(year, latitude, longitude, b_mag_cpue_num_ha, haul_cpue_num_ha, cruise, vessel) -->
+<!--     #  -->
+<!--     # VAST_b_mag2 <- unite(data = bmag12, cpue_num_ha, c(b_mag_cpue_num_ha, haul_cpue_num_ha), na.rm = TRUE) -->
+<!--     #  -->
+<!--     # VAST_b_mag2$cpue_num_ha <- gsub('_0', '', VAST_b_mag2$cpue_num_ha) %>% -->
+<!--     #   as.numeric() -->
+
+<!--   # b_mag_test <- bmag1 %>%  -->
+<!--   #   dplyr::filter(latitude == 55.0416 & year == 2016) -->
+<!--   #  -->
+<!--   # bmag_select <- b_mag_test %>% -->
+<!--   #   as.character((b_mag_test$longitude)) -->
+
+
+
+<!-- # -------------------------------------------------------------------------------- -->
+<!-- # Sablefish -->
+<!-- sablefish_tmp <- sablefish_clean %>%  -->
+<!--   # mutate(sable_cpue_num_ha = cpue_num_ha) %>% -->
+<!--   mutate(sable_cpue_kg_km2 = cpue_kg_km2) %>% -->
+<!--   mutate(Lon = round(longitude, 4)) %>%  -->
+<!--   mutate(Lat = round(latitude, 4)) %>%  -->
+<!--   mutate(sable_Vessel = 0) %>%  -->
+<!--   mutate(Year = year) %>%  -->
+<!--   # dplyr::select(year, latitude, longitude, sable_cpue_num_ha)   -->
+<!--   dplyr::select(Year, Lat, Lon, sable_cpue_kg_km2, sable_Vessel,) %>% -->
+<!--   drop_na(sable_cpue_kg_km2) -->
+
+<!-- sable1 <- full_join(sablefish_tmp, VAST_haul_data, by = c("Year", "Lat", "Lon")) %>%  -->
+<!--   distinct(Year, Lat, Lon, sable_cpue_kg_km2, haul_cpue_kg_km2, -->
+<!--            sable_Vessel, haul_Vessel) -->
+<!--   # distinct(year, latitude, longitude, sable_cpue_num_ha, haul_cpue_num_ha) -->
+
+<!-- VAST_sablefish <- sable1 %>%  -->
+<!--   unite(Catch_KG_km2, c(sable_cpue_kg_km2, haul_cpue_kg_km2), na.rm = TRUE) %>%  -->
+<!--   unite(Vessel, c(sable_Vessel, haul_Vessel), na.rm = TRUE) %>%  -->
+<!--   mutate(AreaSwept_km2 = 1) -->
+
+<!--     # unite(data = sable1, cpue_num_ha, c(sable_cpue_num_ha, haul_cpue_num_ha), na.rm = TRUE)  -->
+
+
+
+<!-- # VAST_sablefish$cpue_num_ha <- gsub('_0', '', VAST_sablefish$cpue_num_ha) %>%  -->
+<!-- #   as.numeric()  -->
+<!-- VAST_sablefish$Catch_KG_km2 <- gsub('_0', '', VAST_sablefish$Catch_KG_km2) %>% -->
+<!-- as.numeric() -->
+<!-- VAST_sablefish$Vessel <- gsub('0_', '', VAST_sablefish$Vessel) %>% -->
+<!--   as.numeric() -->
+
+<!-- VAST_sablefish_nonenc_included <- VAST_sablefish -->
+
+
+<!-- non_enc_yrs <- VAST_sablefish %>%  -->
+<!--   group_by(Year) %>%  -->
+<!--   summarize(yr_catch = sum(Catch_KG_km2)) %>%  -->
+<!--   dplyr::filter(yr_catch == 0) -->
+
+<!--  VAST_sablefish <- VAST_sablefish %>% -->
+<!--   dplyr::filter(!Year %in% non_enc_yrs$Year) -->
+
+
+<!--       # sable_select2 <- sable_select %>% -->
+<!--       #   as.character((sable_select$longitude))  -->
+<!--       #   dplyr::filter(duplicated(longitude) == FALSE) -->
+
+<!-- # duplicate tester -->
+<!--   # b_mag_haul <- full_join(VAST_haul_data, VAST_b_mag, by = c("year", "latitude", "longitude")) -->
+<!--   # b_mag2022 <- VAST_b_mag %>%  -->
+<!--   #   dplyr::filter(year == 2022) -->
+<!--   #  -->
+<!--   # sable2022 <- VAST_sablefish %>%  -->
+<!--   #   dplyr::filter(year == 2022) -->
+<!--   #  -->
+<!--   # haul2022 <- VAST_haul_data %>%  -->
+<!--   #   dplyr::filter(year == 2022) -->
+
+<!--  # sums per year per species -->
+<!-- sabletestVAST <- VAST_sablefish %>% group_by(Year) %>% summarize(total = sum(Catch_KG_km2)) -->
+<!-- b_magtestVAST <- VAST_b_mag %>% group_by(Year) %>% summarize(total = sum(Catch_KG_km2)) -->
+
+
+
+
+<!--    # dplyr::filter(year != 1989, year!= 1995, year != 1996,  -->
+<!--                 # year != 2009, year!= 2011, year != 2013) -->
+
+<!-- ``` -->
+
+
+<!-- ## data output -->
+<!-- ```{r, inlcude = FALSE} -->
+<!-- write_csv(x = VAST_b_mag,  -->
+<!--           file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag.csv")) -->
+<!-- write_csv(x = VAST_sablefish, -->
+<!--           file = here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish.csv")) -->
+<!--           # above has non encounters EXCLUDED -->
+<!-- write_csv(x = VAST_sablefish_nonenc_included, -->
+<!--           file = here::here("R", "epp_ceph_alaska", "output_data", "nonenc_included_VAST_sablefish.csv")) -->
+<!--           # above has non encounters INCLUDED -->
+
+<!-- # write_csv(x = sablefish_tmp, -->
+<!--           # file = here::here("R", "epp_ceph_alaska", "output_data", "sablefish_tmp.csv")) -->
+
+<!-- write_csv(x = VAST_haul_data, -->
+<!--           file = here::here("R", "epp_ceph_alaska", "output_data", "VAST_haul_data.csv")) -->
+
+<!-- # write_csv(x = sabletestVAST, -->
+<!--           # file = here::here("R", "epp_ceph_alaska", "output_data", "sabletestVAST.csv")) -->
+<!-- # write_csv(x = sabletestGeoStat, -->
+<!--           # file = here::here("R", "epp_ceph_alaska", "output_data", "sabletestGeoStat.csv")) -->
+
+<!-- ``` -->
+
+
+<!-- ## comparing Data_Geostat... and VAST_... -->
+<!-- ```{r, include = FALSE } -->
+<!-- Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "VAST_ready_data", "Data_Geostat_squid.csv")) -->
+<!-- Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "VAST_ready_data", "Data_Geostat_sable.csv")) -->
+<!-- Data_Geostat_squid <- Data_Geostat_squid %>%  -->
+<!--   as.data.frame() -->
+<!-- Data_Geostat_sable <- Data_Geostat_sable %>%  -->
+<!--   as.data.frame() -->
+
+
+
+<!-- ``` -->
+
+
