@@ -53,7 +53,7 @@ library(VAST)
 # Set species -------------------------------------------------------------
 
 # species <- 
-run_version <-'sable-squid' # 'sable_only' 'sable-squid'
+run_version <- 'sable-squid2' #'sable-squid_BSS' # 'sable_only' 'sable-squid'
 this_year <- lubridate::year(lubridate::today())
 
 speciesName <- paste0("Sablefish_Squid",this_year,"_", run_version)
@@ -68,15 +68,31 @@ dir.create(workDir, showWarnings = FALSE)
 # table(Data_Geostat_squid$Year)
 
 # Read in data ------------------------------------------------------------
+## Data note to MAG, CIA or who it pertains
+    # "GOOD_VAST_b_mag_BS.csv" and "GOOD_VAST_sablefish_BS.csv" for primary run in google drive, 1982-2022
+    # "VAST_sablefish_BS2002_2016select.csv" and "GOOD_VAST_b_mag_BS_2002_2016.csv" for new, post comment run
+
+# Normal (precomments)
+# Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS.csv"))            #normal
+# Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish_BS.csv"))        #normal
+
+# 2002-2016 select (postcomments)
+# Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS_2002_2016.csv"))      #small time range
+# Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_sablefish_BS2002_2016select.csv"))  #small time range, only with overlap
+
+# BSS only
+Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_sablefish_BSS_2002_2016.csv"))     #This one
+Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_b_mag_BSS_2002_2016.csv"))         #This one
+
+# EBS only
+# Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_sablefish_EBS_1982_2022.csv"))
+# Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_b_mag_EBS_1982_2022.csv"))
+
 # Data_Geostat_squid <- read_csv(here::here("R", "export_to_CA_CO", "GOOD_VAST_b_mag.csv"))          #streamlined here() code for CA_CO
 # Data_Geostat_sable <- read_csv(here::here("R", "export_to_CA_CO", "GOOD_VAST_sablefish.csv"))      #streamlined here() code for CA_CO
 # Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "nonenc_included_VAST_sablefish.csv"))       #nonencounter years included
-Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS.csv"))            #normal
-Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish_BS.csv"))        #normal
 # Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_sablefish_BS_2002_2016.csv"))  #small time range,
-# Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "GOOD_VAST_b_mag_BS_2002_2016.csv"))      #small time range
 # Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_b_mag_BS2002_2016BSS.csv"))          #small time range with large catch
-# Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "output_data", "VAST_sablefish_BS2002_2016select.csv"))  #small time range, only with overlap
 # Data_Geostat_squid <- read_csv(here::here("R", "epp_ceph_alaska", "VAST_ready_data", "Data_Geostat_squid.csv"))
 # Data_Geostat_sable <- read_csv(here::here("R", "epp_ceph_alaska", "VAST_ready_data", "Data_Geostat_sable.csv"))
 # Format catch data -------------------------------------------------------
@@ -112,7 +128,7 @@ n_x <- 250   # Specify number of stations (a.k.a. "knots") ##CIA: test on 100, f
 # RhoConfig <- c("Beta1"=4, "Beta2"=4, "Epsilon1"=0, "Epsilon2"=0)
 
 FieldConfig <- c("Omega1"="IID", "Epsilon1"= "IID", "Omega2"="IID", "Epsilon2"= "IID")  # correlation across space Omega = spatial effects, Epsilon = spatiotemporal
-RhoConfig <- c("Beta1"=0, "Beta2"=0, "Epsilon1"=4, "Epsilon2"=4)#correlation across time
+RhoConfig <- c("Beta1"=0, "Beta2"=0, "Epsilon1"=4, "Epsilon2"=2)#correlation across time
 OverdispersionConfig <- c("Eta1"=0, "Eta2"=0)
 ObsModel <- c(2,4) #Need (2,4) if there are some years with 100% encounter rate
 Options <-  c("Calculate_Range"=FALSE, "Calculate_effective_area"=TRUE, "treat_nonencounter_as_zero"= FALSE) #TRUE )
@@ -250,6 +266,7 @@ saveRDS(full_fit, file = paste0(workDir,"/VASTfit_full_",max_cells,".RDS"))
 # full_fit <- readRDS(file = paste0(workDir,"/VASTfit_full.RDS"))
 
 fit <- full_fit
+
 
 
 
